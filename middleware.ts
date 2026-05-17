@@ -1,3 +1,6 @@
+// Modified by Gigabox Research (2026)
+// Dual auth: magic-link sessions (default) or legacy ACCESS_CODE
+
 import { NextRequest, NextResponse } from 'next/server';
 
 /** Convert string to Uint8Array */
@@ -13,7 +16,7 @@ function bufToHex(buf: ArrayBuffer): string {
 }
 
 /** Verify an HMAC-signed token using Web Crypto API (Edge-compatible) */
-async function verifyToken(token: string, accessCode: string): Promise<boolean> {
+async function verifyAccessCodeToken(token: string, accessCode: string): Promise<boolean> {
   const dotIndex = token.indexOf('.');
   if (dotIndex === -1) return false;
 
@@ -32,7 +35,6 @@ async function verifyToken(token: string, accessCode: string): Promise<boolean> 
   const data = encode(timestamp);
   const expected = bufToHex(await crypto.subtle.sign('HMAC', key, data.buffer as ArrayBuffer));
 
-  // Constant-length comparison (not truly constant-time in JS, but sufficient here)
   if (signature.length !== expected.length) return false;
   let mismatch = 0;
   for (let i = 0; i < signature.length; i++) {
@@ -42,34 +44,57 @@ async function verifyToken(token: string, accessCode: string): Promise<boolean> 
 }
 
 export async function middleware(request: NextRequest) {
-  const accessCode = process.env.ACCESS_CODE;
-  if (!accessCode) {
-    return NextResponse.next();
-  }
-
+  const authMode = process.env.AUTH_MODE || 'magic-link';
   const { pathname } = request.nextUrl;
 
-  // Whitelist: access-code endpoints, health check
-  if (pathname.startsWith('/api/access-code/') || pathname === '/api/health') {
+  // Always allow: health, static assets, auth endpoints
+  if (
+    pathname === '/api/health' ||
+    pathname.startsWith('/api/auth/') ||
+    pathname.startsWith('/api/access-code/') ||
+    pathname === '/login'
+  ) {
     return NextResponse.next();
   }
 
-  // Check cookie — validate HMAC signature, not just existence
-  const cookie = request.cookies.get('openmaic_access');
-  if (cookie?.value && (await verifyToken(cookie.value, accessCode))) {
+  // --- Legacy ACCESS_CODE mode ---
+  if (authMode === 'access-code') {
+    const accessCode = process.env.ACCESS_CODE;
+    if (!accessCode) return NextResponse.next();
+
+    const cookie = request.cookies.get('openmaic_access');
+    if (cookie?.value && (await verifyAccessCodeToken(cookie.value, accessCode))) {
+      return NextResponse.next();
+    }
+
+    if (pathname.startsWith('/api/')) {
+      return NextResponse.json(
+        { success: false, errorCode: 'INVALID_REQUEST', error: 'Access code required' },
+        { status: 401 },
+      );
+    }
+
+    // Page requests — let through, frontend shows modal
     return NextResponse.next();
   }
 
-  // API requests without valid cookie → 401
-  if (pathname.startsWith('/api/')) {
-    return NextResponse.json(
-      { success: false, errorCode: 'INVALID_REQUEST', error: 'Access code required' },
-      { status: 401 },
-    );
+  // --- Magic-link session mode (default) ---
+  // Check for session cookie (iron-session encrypts it, so we just check existence here;
+  // actual validation happens in the API route handlers via getSession())
+  const sessionCookie = request.cookies.get('openmaic_session');
+
+  if (sessionCookie?.value) {
+    // Has session cookie — let through (API routes validate internally)
+    return NextResponse.next();
   }
 
-  // Page requests → let through, frontend shows modal
-  return NextResponse.next();
+  // No session — redirect page requests to /login
+  if (!pathname.startsWith('/api/')) {
+    return NextResponse.redirect(new URL('/login', request.url));
+  }
+
+  // API requests without session → 401
+  return NextResponse.json({ error: 'Not authenticated' }, { status: 401 });
 }
 
 export const config = {

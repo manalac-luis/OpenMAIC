@@ -1,3 +1,4 @@
+// Modified by Gigabox Research (2026)
 import type { Metadata } from 'next';
 import localFont from 'next/font/local';
 import { GeistSans } from 'geist/font/sans';
@@ -37,7 +38,11 @@ export default function RootLayout({
         <ThemeProvider>
           <I18nProvider>
             <ServerProvidersInit />
-            <AccessCodeGuard>{children}</AccessCodeGuard>
+            {process.env.AUTH_MODE === 'access-code' ? (
+              <AccessCodeGuard>{children}</AccessCodeGuard>
+            ) : (
+              children
+            )}
             <Toaster position="top-center" />
           </I18nProvider>
         </ThemeProvider>
