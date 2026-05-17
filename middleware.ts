@@ -43,6 +43,20 @@ async function verifyAccessCodeToken(token: string, accessCode: string): Promise
   return mismatch === 0;
 }
 
+function getBaseUrl(request: NextRequest): string {
+  // Behind a proxy, use forwarded headers or configured base URL
+  const forwardedHost = request.headers.get('x-forwarded-host');
+  const forwardedProto = request.headers.get('x-forwarded-proto') || 'https';
+  if (forwardedHost) return `${forwardedProto}://${forwardedHost}`;
+
+  const host = request.headers.get('host');
+  if (host && !host.startsWith('127.0.0.1') && !host.startsWith('localhost')) {
+    return `${forwardedProto}://${host}`;
+  }
+
+  return process.env.NEXT_PUBLIC_BASE_URL || request.nextUrl.origin;
+}
+
 export async function middleware(request: NextRequest) {
   const authMode = process.env.AUTH_MODE || 'magic-link';
   const { pathname } = request.nextUrl;
@@ -90,9 +104,7 @@ export async function middleware(request: NextRequest) {
 
   // No session — redirect page requests to /login
   if (!pathname.startsWith('/api/')) {
-    const loginUrl = request.nextUrl.clone();
-    loginUrl.pathname = '/login';
-    return NextResponse.redirect(loginUrl);
+    return NextResponse.redirect(new URL('/login', getBaseUrl(request)));
   }
 
   // API requests without session → 401
