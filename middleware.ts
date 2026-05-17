@@ -90,7 +90,9 @@ export async function middleware(request: NextRequest) {
 
   // No session — redirect page requests to /login
   if (!pathname.startsWith('/api/')) {
-    return NextResponse.redirect(new URL('/login', request.url));
+    const loginUrl = request.nextUrl.clone();
+    loginUrl.pathname = '/login';
+    return NextResponse.redirect(loginUrl);
   }
 
   // API requests without session → 401
